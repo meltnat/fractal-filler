@@ -1,6 +1,5 @@
 """This file contains the implementation of the box count algorithm."""
 
-import cupy as cp
 import numpy as np
 import torch
 from torch import Tensor
@@ -9,23 +8,23 @@ from torch import Tensor
 def fractal_dimension(image: np.ndarray) -> float:
     """Count the fractal dimension of an image."""
     # Convert the image to a boolean array on gpu.
-    data = cp.array(image, dtype=bool)
+    data = np.array(image, dtype=bool)
     x, y = data.shape
     limit = data.shape[0] // 10
     box_sizes = [1]
-    counts = [cp.sum(data).get()]
+    counts = [np.sum(data).get()]
 
     while box_sizes[-1] < limit:
         box_sizes.append(box_sizes[-1] * 2)
         old = data.copy()
         old_x, old_y = old.shape
         new_x, new_y = -(-old_x // 2), -(-old_y // 2)
-        data = cp.zeros((new_x, new_y))
+        data = np.zeros((new_x, new_y))
         for i in range(old_x):
             for j in range(old_y):
                 if old[i, j]:
                     data[i // 2, j // 2] = 1
-        counts.append(cp.sum(data).get())
+        counts.append(np.sum(data))
 
     log_sizes = np.log(box_sizes)
     log_counts = np.log(counts)
