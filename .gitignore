@@ -166,3 +166,6 @@ data/
 
 # vscode workspace file
 *.code-workspace
+
+# scripts
+scripts/
