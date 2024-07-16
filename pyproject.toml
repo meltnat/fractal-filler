@@ -3,9 +3,6 @@ line-length = 150
 indent-width = 4
 select = ["ALL"]
 ignore = [
-"T201",
-"PLR0913",
-"S311",
 ]
 
 [tool.ruff.pydocstyle]

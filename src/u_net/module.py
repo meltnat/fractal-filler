@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import OrderedDict
 
 import torch
-from fractal import dq_from_tensor
 from torch import Tensor, nn
 
 
@@ -63,7 +62,7 @@ class UNet(nn.Module):
             kernel_size=1,
         )
 
-    def forward(self: UNet, x: torch.Tensor) -> tuple[Tensor, Tensor]:
+    def forward(self: UNet, x: torch.Tensor) -> Tensor:
         """Forward pass."""
         enc1 = self.encoder1(x)
         enc2 = self.encoder2(self.pool1(enc1))
@@ -85,9 +84,7 @@ class UNet(nn.Module):
         dec1 = torch.cat((dec1, enc1), dim=1)
         dec1 = self.decoder1(dec1)
 
-        result = torch.sigmoid(self.conv(dec1))
-
-        return result, dq_from_tensor(result)
+        return torch.sigmoid(self.conv(dec1))
 
     @staticmethod
     def _block(in_channels: int, features: int, name: str) -> nn.Sequential:

@@ -6,7 +6,7 @@
   "configurations": [
     {
       "name": "Python デバッガー: 現在のファイル",
-      "type": "debugpy",
+      "type": "python",
       "request": "launch",
       "program": "./src/main.py",
       "console": "integratedTerminal"

@@ -1,8 +1,18 @@
 """This file contains the implementation of the box count algorithm."""
 
+from __future__ import annotations
+
+import multiprocessing
+import os
+import time
+from concurrent import futures
+
+import log
 import numpy as np
 import torch
 from torch import Tensor
+
+logger = log.log(__name__)
 
 
 def fractal_dimension(image: np.ndarray) -> float:
@@ -34,13 +44,11 @@ def fractal_dimension(image: np.ndarray) -> float:
 
 def lsm(x: Tensor, y: Tensor) -> Tensor:
     """Least squares method."""
-    a01, a02, a11, a12 = 0, 0, 0, 0
     a00 = min(len(x), len(y))
-    for i in range(a00):
-        a01 += x[i]
-        a02 += y[i]
-        a11 += x[i] ** 2
-        a12 += x[i] * y[i]
+    a01 = x.sum()
+    a02 = y.sum()
+    a11 = (x**2).sum()
+    a12 = (x * y).sum()
     return (a00 * a12 - a01 * a02) / (a00 * a11 - a01**2)
 
 
@@ -69,3 +77,31 @@ def count(image: Tensor) -> Tensor:
 def dq_from_tensor(images: Tensor) -> Tensor:
     """Count the fractal dimension of an image."""
     return torch.cat([count(images[i]).unsqueeze_(0) for i in range(images.shape[0])])
+
+
+def count_multi(index: int, images: Tensor) -> tuple[int, Tensor]:
+    """Count the fractal dimension of an image."""
+    return index, count(images)
+
+
+def dq_multi(images: Tensor) -> Tensor:
+    """Count the fractal dimension of an image."""
+    results: list[tuple[int, Tensor]] = []
+    with futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        futures_list = []
+        logger.info("Counting fractal dimensions...")
+        for i in images.shape[0]:
+            future = executor.submit(count_multi, i, images[i])
+            futures_list.append(future)
+            future.add_done_callback(lambda future: results.append(future.result()))
+        size = len(futures_list)
+        while futures_list:
+            active_processes = len(multiprocessing.active_children())
+            logger.info(
+                f"Active processes: {active_processes} / {100 - int(len(futures_list) * 100 / size)}% Done ({len(futures_list)})",  # noqa: G004
+            )
+            time.sleep(1)
+            futures_list = [f for f in futures_list if not f.done()]
+    results.sort(key=lambda x: x[0])
+    results = [x[1].unsqueeze_(0) for x in results]
+    return torch.cat(results)
