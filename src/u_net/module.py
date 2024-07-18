@@ -7,9 +7,31 @@ from collections import OrderedDict
 import torch
 from torch import Tensor, nn
 
+from u_net import FractalDim2d
+
 
 class UNet(nn.Module):
     """UNet module for image segmentation."""
+
+    encoder1: nn.Sequential
+    pool1: nn.MaxPool2d
+    encoder2: nn.Sequential
+    pool2: nn.MaxPool2d
+    encoder3: nn.Sequential
+    pool3: nn.MaxPool2d
+    encoder4: nn.Sequential
+    pool4: nn.MaxPool2d
+    bottleneck: nn.Sequential
+    upconv4: nn.ConvTranspose2d
+    decoder4: nn.Sequential
+    upconv3: nn.ConvTranspose2d
+    decoder3: nn.Sequential
+    upconv2: nn.ConvTranspose2d
+    decoder2: nn.Sequential
+    upconv1: nn.ConvTranspose2d
+    decoder1: nn.Sequential
+    conv: nn.Conv2d
+    dim: FractalDim2d
 
     def __init__(self: UNet, in_channels: int, out_channels: int = 1, init_features: int = 32) -> None:
         """Initialize UNet module."""
@@ -62,6 +84,8 @@ class UNet(nn.Module):
             kernel_size=1,
         )
 
+        self.dim = FractalDim2d(7, nn.MaxPool2d(kernel_size=2, stride=2))
+
     def forward(self: UNet, x: torch.Tensor) -> Tensor:
         """Forward pass."""
         enc1 = self.encoder1(x)
@@ -83,8 +107,8 @@ class UNet(nn.Module):
         dec1 = self.upconv1(dec2)
         dec1 = torch.cat((dec1, enc1), dim=1)
         dec1 = self.decoder1(dec1)
-
-        return torch.sigmoid(self.conv(dec1))
+        result = torch.sigmoid(self.conv(dec1))
+        return result, self.dim(result)
 
     @staticmethod
     def _block(in_channels: int, features: int, name: str) -> nn.Sequential:

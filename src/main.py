@@ -17,8 +17,8 @@ import torch
 import utils
 from PIL import Image
 from torch import Tensor, nn, optim
-from torch.utils.data import DataLoader
-from u_net import FractalDim2d, ImageDataset, Loss, UNet
+from torch.utils.data import DataLoader, random_split
+from u_net import FractalDataset, FractalDim2d, ImageDataset, Loss, UNet
 
 logger = utils.log(__name__)
 
@@ -32,47 +32,45 @@ OUT = Path("data/out")
 BATCH_SIZE = 8
 EPOCHS = 5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+SPLIT_RATE = 0.9
 
 
 def test() -> None:
     """Test."""
-    labels = INDEX.read_text().split("\n")
-    result = labeling_images(labels=labels, fractal_step=nn.MaxPool2d(2, 2))
-    DATASETS.write_text("\n".join([f"{labels[i]},{result[i]}" for i in range(result.shape[0])]))
-    return
     main()
 
 
 def main() -> None:
     """Main function."""
     logger.info("Starting...")
-    logger.info("Device: %", DEVICE)
-    dqs = []
-    images = []
-    for line in DATASETS.read_text().split("\n"):
+    logger.info(f"Device: {DEVICE}")
+    dqs: list[float] = []
+    images: list[str] = []
+    for line in DATASETS.read_text().split("\n")[0:200]:
         image, dq = line.split(",")
-        dqs.append(dq)
+        dqs.append(float(dq))
         images.append(image)
-    train_y = ImageDataset(images=[ORIGIN / _ for _ in images])
-    train_x = ImageDataset(images=[EDITED / _ for _ in images])
+    dataset = FractalDataset(edited_images=[EDITED / _ for _ in images], original_images=[ORIGIN / _ for _ in images], original_dims=dqs)
+    size = len(dataset)
+    train_size = int(size * SPLIT_RATE)
+    train_data, test_data = random_split(dataset=dataset, lengths=[train_size, size - train_size])
     train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=True, num_workers=MAX_WORKERS)
-    logger.info("Data size:%", len(train_data))
+    logger.info(f"Train Data size:{len(train_data)}")
     model = UNet(in_channels=1).to(DEVICE)
     logger.info("Start Learning...")
     learn(model=model, dataloader=train_loader)
     model.load_state_dict(torch.load(MODEL))
 
-    test_data = ImageDataset(csv=TEST, input_path=EDITED, target_path=ORIGIN)
     test_loader = DataLoader(dataset=test_data, batch_size=BATCH_SIZE, num_workers=MAX_WORKERS)
 
     count = 0
     for file in OUT.iterdir():
         file.unlink()
-    for x, _ in test_loader:
+    for x, _, _ in test_loader:
         with torch.no_grad():
             output, _ = model(x.to(DEVICE))
         for o in output:
-            Image.fromarray((o.cpu().squeeze_(1).squeeze_(1).numpy() * 255).astype(np.uint8)).save(OUT / f"{count}.png")
+            Image.fromarray((o.cpu().squeeze_(0).squeeze_(0).numpy() * 255).astype(np.uint8)).save(OUT / f"{count}.png")
             count += 1
 
 
@@ -81,23 +79,23 @@ def learn(model: nn.Module, dataloader: DataLoader) -> None:
     bcl = Loss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     size = len(dataloader.dataset)
+    total_size = size * EPOCHS
     start = datetime.datetime.now(tz=datetime.timezone.utc)
     for epoch in range(EPOCHS):
         model.train()
-        result = []
-        for batch, (images, target) in enumerate(dataloader):
-            images_g = images.to(DEVICE)
-            target_g = target.to(DEVICE)
+        for batch, (edited, _, dim) in enumerate(dataloader):
             optimizer.zero_grad()
-            result.append(model(images_g))
-            loss = bcl(dq_from_tensor(target_g))
+            _, r_dim = model(edited.to(DEVICE))
+            loss = bcl(dim.to(DEVICE), r_dim)
             loss.backward()
             optimizer.step()
-            if batch % 10 == 0:
-                now = datetime.datetime.now(tz=datetime.timezone.utc)
+            if (batch + 1) % (size // 100) == 0:
+                delta = datetime.datetime.now(tz=datetime.timezone.utc) - start
+                dones = batch * BATCH_SIZE + epoch * size
                 logger.info(
-                    f"[{batch * len(images):>5d}/{size:>5d}]"
-                    f"Spend:{now - start} End:{(now - start)*(1-(epoch*size+batch*BATCH_SIZE)/EPOCHS*size)}",
+                    f"Loss: {loss.item()} Epoch:{epoch} {(batch * BATCH_SIZE * 100+1) // size}%[{batch * BATCH_SIZE+1}/{size}] "
+                    f"Total:{(dones+1) * 100 // total_size}%[{dones+1}/{total_size}] "
+                    f"Spend:{delta} End:{(delta)*(total_size - dones) / (dones + 1)}",
                 )
 
     torch.save(model.state_dict(), MODEL)

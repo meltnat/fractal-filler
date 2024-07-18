@@ -1,4 +1,4 @@
 #!/bin/bash
 
 # Run the application
-docker run docker-filler --gpus all --shm-size 8g -v "${pwd}":/Workspace python ./src/main.py
+docker run --rm --gpus all --shm-size 8g -v $(pwd):/Workspace fractal-filler/python:1.0 python ./src/main.py

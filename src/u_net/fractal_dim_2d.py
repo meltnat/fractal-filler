@@ -26,11 +26,15 @@ class FractalDim2d(nn.Module):
         a12 = (x * y).sum()
         return (a00 * a12 - a01 * a02) / (a00 * a11 - a01**2)
 
-    def forward(self, image: Tensor) -> Tensor:
-        """Calculate the fractal dimension of the input image."""
-        data = [image.clone().unsqueeze_(0)]
+    def count(self, image: Tensor) -> Tensor:
+        """Count the number of non-zero pixels in the image."""
+        data = [image.clone()]
         for _ in range(self.n - 1):
             data.append(self.fractal_step(data[-1]))
             counts = [d.sum().unsqueeze_(0) for d in data]
             boxes = torch.tensor([2**_ for _ in range(len(data))], device=image.device)
         return -FractalDim2d.lsm(boxes.log().squeeze_(0), torch.cat(counts).log().squeeze_(0))
+
+    def forward(self, images: Tensor) -> Tensor:
+        """Calculate the fractal dimension of the input image."""
+        return torch.cat([self.count(image).unsqueeze_(0) for image in images])

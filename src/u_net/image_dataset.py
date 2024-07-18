@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from torch import Tensor
+    from torchvision.transforms import Transform
 
 
 class ImageDataset(Dataset):
@@ -21,11 +22,12 @@ class ImageDataset(Dataset):
     input_path: Path
     target_path: Path
     to_tensor: transforms.ToTensor
+    transform: Transform
 
-    def __init__(self: ImageDataset, images: list[Path]) -> None:
+    def __init__(self: ImageDataset, images: list[Path], transform: Transform = transforms.ToTensor) -> None:
         """Initialize the dataset class."""
         self.images = images
-        self.to_tensor = transforms.ToTensor()
+        self.transform = transform()
 
     def __len__(self: ImageDataset) -> int:
         """Return the length of the dataset."""
@@ -35,6 +37,6 @@ class ImageDataset(Dataset):
         """Return the item at the given index."""
         """Convert the image at the given path to a tensor."""
         image = Image.open(self.images[index]).convert("L").resize((512, 512))
-        tensor = self.to_tensor(image)
+        tensor = self.transform(image)
         tensor[tensor > 0] = 1
         return tensor
