@@ -14,15 +14,14 @@
 		"--gpus",
 		"all",
 		"--shm-size",
-		"8g",
-		"--cpus",
-		".9"
+		"8g"
 	],
 	"customizations": {
 		"vscode": {
 			"extensions": [
 				"ms-python.python",
-				"charliermarsh.ruff"
+				"charliermarsh.ruff",
+				"ms-azuretools.vscode-docker"
 			]
 		}
 	}

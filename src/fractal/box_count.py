@@ -2,44 +2,12 @@
 
 from __future__ import annotations
 
-import multiprocessing
-import os
-import time
-from concurrent import futures
-
-import log
 import numpy as np
 import torch
-from torch import Tensor
+from log import log
+from torch import Tensor, nn
 
-logger = log.log(__name__)
-
-
-def fractal_dimension(image: np.ndarray) -> float:
-    """Count the fractal dimension of an image."""
-    # Convert the image to a boolean array on gpu.
-    data = np.array(image, dtype=bool)
-    x, y = data.shape
-    limit = data.shape[0] // 10
-    box_sizes = [1]
-    counts = [np.sum(data).get()]
-
-    while box_sizes[-1] < limit:
-        box_sizes.append(box_sizes[-1] * 2)
-        old = data.copy()
-        old_x, old_y = old.shape
-        new_x, new_y = -(-old_x // 2), -(-old_y // 2)
-        data = np.zeros((new_x, new_y))
-        for i in range(old_x):
-            for j in range(old_y):
-                if old[i, j]:
-                    data[i // 2, j // 2] = 1
-        counts.append(np.sum(data))
-
-    log_sizes = np.log(box_sizes)
-    log_counts = np.log(counts)
-
-    return abs(np.polyfit(log_sizes, log_counts, 1)[0])
+logger = log(__name__)
 
 
 def lsm(x: Tensor, y: Tensor) -> Tensor:
@@ -52,56 +20,70 @@ def lsm(x: Tensor, y: Tensor) -> Tensor:
     return (a00 * a12 - a01 * a02) / (a00 * a11 - a01**2)
 
 
-def count(image: Tensor) -> Tensor:
+def count_pool(image: Tensor) -> Tensor:
+    """Count the fractal dimension of an image."""
+    pool = nn.MaxPool2d(2, 2)
+    data = [image.clone().unsqueeze_(0)]
+    for _ in range(6):
+        data.append(pool(data[-1]))
+    counts = [data[i].sum().unsqueeze_(0) for i in range(len(data))]
+    boxes = torch.tensor([1, 2, 4, 8, 16, 32, 64], device=image.device)
+    return -lsm(boxes.log().squeeze_(0), torch.cat(counts).log().squeeze_(0))
+
+
+def count_resize(image: Tensor) -> Tensor:
     """Count the fractal dimension of an image."""
     data = image.clone().squeeze_(0)
     x, y = data.shape
-    limit = min(x, y) // 2
-    box_sizes = [torch.tensor([1], device="cuda")]
-    counts = [data.sum().reshape(1)]
+    data2 = torch.zeros(x // 2, y // 2, device="cuda")
+    data4 = torch.zeros(x // 4, y // 4, device="cuda")
+    data8 = torch.zeros(x // 8, y // 8, device="cuda")
+    data16 = torch.zeros(x // 16, y // 16, device="cuda")
+    data32 = torch.zeros(x // 32, y // 32, device="cuda")
+    data64 = torch.zeros(x // 64, y // 64, device="cuda")
+    for i in range(x):
+        for j in range(y):
+            if data[i, j]:
+                data2[i // 2, j // 2] = 1
+                data4[i // 4, j // 4] = 1
+                data8[i // 8, j // 8] = 1
+                data16[i // 16, j // 16] = 1
+                data32[i // 32, j // 32] = 1
+                data64[i // 64, j // 64] = 1
+    counts = torch.cat(
+        data.sum().reshape(1),
+        data2.sum().reshape(1),
+        data4.sum().reshape(1),
+        data8.sum().reshape(1),
+        data16.sum().reshape(1),
+        data32.sum().reshape(1),
+        data64.sum().reshape(1),
+    )
+    boxes = torch.tensor([1, 2, 4, 8, 16, 32, 64], device="cuda")
+    return -lsm(boxes.log().squeeze_(0), counts.log().squeeze_(0))
 
-    while box_sizes[-1] < limit:
-        box_sizes.append(box_sizes[-1] * 2)
-        old = data.clone()
-        old_x, old_y = old.shape
-        new_x, new_y = -(-old_x // 2), -(-old_y // 2)
-        data = torch.zeros(new_x, new_y, device="cuda")
-        for i in range(old_x):
-            for j in range(old_y):
-                if old[i, j]:
-                    data[i // 2, j // 2] = 1
-        counts.append(data.sum().reshape(1))
-    return lsm(torch.cat(box_sizes).log().squeeze_(0), torch.cat(counts).log().squeeze_(0)) * -1
 
-
-def dq_from_tensor(images: Tensor) -> Tensor:
+def count_cpu(image: np.ndarray) -> float:
     """Count the fractal dimension of an image."""
-    return torch.cat([count(images[i]).unsqueeze_(0) for i in range(images.shape[0])])
-
-
-def count_multi(index: int, images: Tensor) -> tuple[int, Tensor]:
-    """Count the fractal dimension of an image."""
-    return index, count(images)
-
-
-def dq_multi(images: Tensor) -> Tensor:
-    """Count the fractal dimension of an image."""
-    results: list[tuple[int, Tensor]] = []
-    with futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures_list = []
-        logger.info("Counting fractal dimensions...")
-        for i in images.shape[0]:
-            future = executor.submit(count_multi, i, images[i])
-            futures_list.append(future)
-            future.add_done_callback(lambda future: results.append(future.result()))
-        size = len(futures_list)
-        while futures_list:
-            active_processes = len(multiprocessing.active_children())
-            logger.info(
-                f"Active processes: {active_processes} / {100 - int(len(futures_list) * 100 / size)}% Done ({len(futures_list)})",  # noqa: G004
-            )
-            time.sleep(1)
-            futures_list = [f for f in futures_list if not f.done()]
-    results.sort(key=lambda x: x[0])
-    results = [x[1].unsqueeze_(0) for x in results]
-    return torch.cat(results)
+    x, y = image.shape
+    data = image.copy()
+    data2 = np.zeros((x // 2, y // 2))
+    data4 = np.zeros((x // 4, y // 4))
+    data8 = np.zeros((x // 8, y // 8))
+    data16 = np.zeros((x // 16, y // 16))
+    data32 = np.zeros((x // 32, y // 32))
+    data64 = np.zeros((x // 64, y // 64))
+    for i in range(x):
+        for j in range(y):
+            if data[i, j]:
+                data2[i // 2, j // 2] = 1
+                data4[i // 4, j // 4] = 1
+                data8[i // 8, j // 8] = 1
+                data16[i // 16, j // 16] = 1
+                data32[i // 32, j // 32] = 1
+                data64[i // 64, j // 64] = 1
+    counts = np.array(
+        [data.sum(), data2.sum(), data4.sum(), data8.sum(), data16.sum(), data32.sum(), data64.sum()],
+    )
+    boxes = np.array([1, 2, 4, 8, 16, 32, 64])
+    return -lsm(np.log(boxes), np.log(counts))

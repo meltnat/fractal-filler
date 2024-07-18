@@ -17,30 +17,23 @@ if TYPE_CHECKING:
 class ImageDataset(Dataset):
     """Dataset class for training the U-Net model."""
 
-    images: list[str]
+    images: list[Path]
     input_path: Path
     target_path: Path
 
-    def __init__(self: ImageDataset, csv: Path, input_path: Path, target_path: Path) -> None:
+    def __init__(self: ImageDataset, images: list[Path]) -> None:
         """Initialize the dataset class."""
-        self.images = csv.read_text().split("\n")
-        self.input_path = input_path
-        self.target_path = target_path
+        self.images = images
 
     def __len__(self: ImageDataset) -> int:
         """Return the length of the dataset."""
         return len(self.images)
 
-    def to_tensor(self, path: Path) -> Tensor:
-        """Convert the image at the given path to a tensor."""
-        image = Image.open(path).convert("L").resize((512, 512))
-        tensor = transforms.ToTensor()(image)
-        tensor[tensor > 0] = 1
-        return tensor
-
     def __getitem__(self: ImageDataset, index: int) -> Tensor:
         """Return the item at the given index."""
-        return (
-            self.to_tensor(self.input_path / self.images[index]),
-            self.to_tensor(self.target_path / self.images[index]),
-        )
+        """Convert the image at the given path to a tensor."""
+        image = Image.open(self.images[index]).convert("L").resize((512, 512))
+        tensor = transforms.ToTensor()(image)
+        tensor.to("cuda")
+        tensor[tensor > 0] = 1
+        return tensor

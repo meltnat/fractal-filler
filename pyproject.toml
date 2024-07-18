@@ -3,7 +3,11 @@ line-length = 150
 indent-width = 4
 select = ["ALL"]
 ignore = [
+  "G004"
 ]
+
+[tool.setuptools.package.find]
+exclude = ["data*"]
 
 [tool.ruff.pydocstyle]
 convention = "google"

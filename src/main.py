@@ -12,19 +12,19 @@ import time
 from concurrent import futures
 from pathlib import Path
 
-import log
 import numpy as np
 import torch
-from fractal import dq_from_tensor, dq_multi
+from fractal import box_count
+from log import log
 from PIL import Image
 from torch import Tensor, nn, optim
 from torch.utils.data import DataLoader
-from torchvision import transforms
 from u_net import ImageDataset, Loss, UNet
 
-logger = log.log(__name__)
+logger = log(__name__)
 
 DATASETS = Path("data/datasets.csv")
+INDEX = Path("data/index.csv")
 ORIGIN = Path("data/origin")
 EDITED = Path("data/edited")
 MODEL = Path("data/model.pth")
@@ -37,8 +37,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def test() -> None:
     """Test."""
-    labels = load_files()
-    result = labeling_images(labels=labels)
+    labels = INDEX.read_text().split("\n")
+    result = labeling_images(labels=labels[0:100])
     DATASETS.write_text("\n".join([f"{labels[i]},{result[i]}" for i in result.shape[0]]))
     return
     main()
@@ -90,7 +90,7 @@ def learn(model: nn.Module, dataloader: DataLoader) -> None:
             if batch % 10 == 0:
                 now = datetime.datetime.now(tz=datetime.timezone.utc)
                 logger.info(
-                    f"[{batch * len(images):>5d}/{size:>5d}]"  # noqa: G004
+                    f"[{batch * len(images):>5d}/{size:>5d}]"
                     f"Spend:{now - start} End:{(now - start)*(1-(epoch*size+batch*BATCH_SIZE)/EPOCHS*size)}",
                 )
 
@@ -130,17 +130,37 @@ def edit_images() -> None:
             time.sleep(1)
 
 
+def labeling(index: int, datasets: ImageDataset) -> tuple[int, Tensor]:
+    """Labeling."""
+    return index, box_count.count_pool(datasets[index]).cpu()
+
+
 def labeling_images(labels: list[str]) -> Tensor:
     """Label images."""
     logger.info("Labeling images...")
-    images: list[Tensor] = []
-    for label in labels:
-        image = Image.open(ORIGIN / label).convert("L")
-        t = transforms.ToTensor()(image)
-        t[t > 0] = 1
-        t.to(DEVICE)
-        images.append(t)
-    return dq_multi(images)
+    datasets = ImageDataset([ORIGIN / _ for _ in labels])
+    dqs = []
+    with futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_list = []
+        logger.info("Counting fractal dimensions...")
+        for i in range(len(datasets)):
+            future = executor.submit(labeling, i, datasets)
+            future_list.append(future)
+            if i % (len(datasets) / 100) == 0:
+                logger.info(f"{i * 100 // len(datasets)}% Done ({i})")
+        doing_list = future_list.copy()
+        while doing_list:
+            active_processes = len(multiprocessing.active_children())
+            logger.info(
+                f"Active processes: {active_processes} / {100 - len(doing_list) * 100 // len(future_list)}% Done ({len(doing_list)})",
+            )
+            time.sleep(1)
+            doing_list = [f for f in doing_list if not f.done()]
+        logger.info("All processes are done.")
+    for f in future_list:
+        i, dq = f.result()
+        dqs[i] = dq
+    return torch.cat(dqs)
 
 
 def load_files() -> list[str]:
