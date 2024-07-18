@@ -14,14 +14,13 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from fractal import box_count
-from log import log
+import utils
 from PIL import Image
 from torch import Tensor, nn, optim
 from torch.utils.data import DataLoader
-from u_net import ImageDataset, Loss, UNet
+from u_net import FractalDim2d, ImageDataset, Loss, UNet
 
-logger = log(__name__)
+logger = utils.log(__name__)
 
 DATASETS = Path("data/datasets.csv")
 INDEX = Path("data/index.csv")
@@ -38,8 +37,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 def test() -> None:
     """Test."""
     labels = INDEX.read_text().split("\n")
-    result = labeling_images(labels=labels[0:100])
-    DATASETS.write_text("\n".join([f"{labels[i]},{result[i]}" for i in result.shape[0]]))
+    result = labeling_images(labels=labels, fractal_step=nn.MaxPool2d(2, 2))
+    DATASETS.write_text("\n".join([f"{labels[i]},{result[i]}" for i in range(result.shape[0])]))
     return
     main()
 
@@ -48,7 +47,14 @@ def main() -> None:
     """Main function."""
     logger.info("Starting...")
     logger.info("Device: %", DEVICE)
-    train_data = ImageDataset(csv=PATHS, input_path=EDITED, target_path=ORIGIN)
+    dqs = []
+    images = []
+    for line in DATASETS.read_text().split("\n"):
+        image, dq = line.split(",")
+        dqs.append(dq)
+        images.append(image)
+    train_y = ImageDataset(images=[ORIGIN / _ for _ in images])
+    train_x = ImageDataset(images=[EDITED / _ for _ in images])
     train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=True, num_workers=MAX_WORKERS)
     logger.info("Data size:%", len(train_data))
     model = UNet(in_channels=1).to(DEVICE)
@@ -130,36 +136,12 @@ def edit_images() -> None:
             time.sleep(1)
 
 
-def labeling(index: int, datasets: ImageDataset) -> tuple[int, Tensor]:
-    """Labeling."""
-    return index, box_count.count_pool(datasets[index]).cpu()
-
-
-def labeling_images(labels: list[str]) -> Tensor:
-    """Label images."""
+def labeling_images(labels: list[str], fractal_step: any) -> Tensor:
+    """Labeling images."""
     logger.info("Labeling images...")
     datasets = ImageDataset([ORIGIN / _ for _ in labels])
-    dqs = []
-    with futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_list = []
-        logger.info("Counting fractal dimensions...")
-        for i in range(len(datasets)):
-            future = executor.submit(labeling, i, datasets)
-            future_list.append(future)
-            if i % (len(datasets) / 100) == 0:
-                logger.info(f"{i * 100 // len(datasets)}% Done ({i})")
-        doing_list = future_list.copy()
-        while doing_list:
-            active_processes = len(multiprocessing.active_children())
-            logger.info(
-                f"Active processes: {active_processes} / {100 - len(doing_list) * 100 // len(future_list)}% Done ({len(doing_list)})",
-            )
-            time.sleep(1)
-            doing_list = [f for f in doing_list if not f.done()]
-        logger.info("All processes are done.")
-    for f in future_list:
-        i, dq = f.result()
-        dqs[i] = dq
+    fd2d = FractalDim2d(n_counts=7, fractal_step=fractal_step)
+    dqs = utils.loop_with_progress(lambda x: fd2d(x).unsqueeze_(0), datasets, logger)
     return torch.cat(dqs)
 
 

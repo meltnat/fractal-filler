@@ -20,10 +20,12 @@ class ImageDataset(Dataset):
     images: list[Path]
     input_path: Path
     target_path: Path
+    to_tensor: transforms.ToTensor
 
     def __init__(self: ImageDataset, images: list[Path]) -> None:
         """Initialize the dataset class."""
         self.images = images
+        self.to_tensor = transforms.ToTensor()
 
     def __len__(self: ImageDataset) -> int:
         """Return the length of the dataset."""
@@ -33,7 +35,6 @@ class ImageDataset(Dataset):
         """Return the item at the given index."""
         """Convert the image at the given path to a tensor."""
         image = Image.open(self.images[index]).convert("L").resize((512, 512))
-        tensor = transforms.ToTensor()(image)
-        tensor.to("cuda")
+        tensor = self.to_tensor(image)
         tensor[tensor > 0] = 1
         return tensor
