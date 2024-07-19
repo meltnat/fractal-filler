@@ -32,7 +32,8 @@ OUT = Path("data/out")
 BATCH_SIZE = 8
 EPOCHS = 5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SPLIT_RATE = 0.9
+TRAIN_DATA_SIZE = 10**4
+TEST_DATA_SIZE = 10**2
 
 
 def test() -> None:
@@ -46,14 +47,13 @@ def main() -> None:
     logger.info(f"Device: {DEVICE}")
     dqs: list[float] = []
     images: list[str] = []
-    for line in DATASETS.read_text().split("\n")[0:200]:
+    for line in DATASETS.read_text().split("\n"):
         image, dq = line.split(",")
         dqs.append(float(dq))
         images.append(image)
     dataset = FractalDataset(edited_images=[EDITED / _ for _ in images], original_images=[ORIGIN / _ for _ in images], original_dims=dqs)
     size = len(dataset)
-    train_size = int(size * SPLIT_RATE)
-    train_data, test_data = random_split(dataset=dataset, lengths=[train_size, size - train_size])
+    train_data, test_data, _ = random_split(dataset=dataset, lengths=[TRAIN_DATA_SIZE, TEST_DATA_SIZE, size - TRAIN_DATA_SIZE - TEST_DATA_SIZE])
     train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=True, num_workers=MAX_WORKERS)
     logger.info(f"Train Data size:{len(train_data)}")
     model = UNet(in_channels=1).to(DEVICE)
@@ -66,7 +66,7 @@ def main() -> None:
     count = 0
     for file in OUT.iterdir():
         file.unlink()
-    for x, _, _ in test_loader:
+    for _, x, _ in test_loader:
         with torch.no_grad():
             output, _ = model(x.to(DEVICE))
         for o in output:
@@ -83,7 +83,7 @@ def learn(model: nn.Module, dataloader: DataLoader) -> None:
     start = datetime.datetime.now(tz=datetime.timezone.utc)
     for epoch in range(EPOCHS):
         model.train()
-        for batch, (edited, _, dim) in enumerate(dataloader):
+        for batch, (_, edited, dim) in enumerate(dataloader):
             optimizer.zero_grad()
             _, r_dim = model(edited.to(DEVICE))
             loss = bcl(dim.to(DEVICE), r_dim)
