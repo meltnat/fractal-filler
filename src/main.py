@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 """this is the main file of the Fractal Dimension project."""
 
 from __future__ import annotations
@@ -14,11 +13,12 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import utils
 from PIL import Image
 from torch import Tensor, nn, optim
 from torch.utils.data import DataLoader, random_split
-from u_net import FractalDataset, FractalDim2d, ImageDataset, Loss, UNet
+
+import utils
+from u_net import DqModel, FractalDataset, FractalDim2d, ImageDataset, Loss, UNet, learn_dq
 
 logger = utils.log(__name__)
 
@@ -30,7 +30,7 @@ MODEL = Path("data/model.pth")
 MAX_WORKERS = os.cpu_count()
 OUT = Path("data/out")
 BATCH_SIZE = 8
-EPOCHS = 5
+EPOCHS = 20
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 TRAIN_DATA_SIZE = 10**4
 TEST_DATA_SIZE = 10**2
@@ -38,13 +38,60 @@ TEST_DATA_SIZE = 10**2
 
 def test() -> None:
     """Test."""
-    main()
+    path = "data/test/1.png"
+    tensor = torch.tensor(Image.open(path).convert("L"))
+    threshold = 0.5
+    tensor[tensor > threshold] = 1
+    tensor[tensor <= threshold] = 0
+    for i, j in enumerate(FractalDim2d(7, bounds=torch.tensor([0, 1, 2]))(tensor)):
+        logger.info(f"Index: {i} Value: {j}")
+    return
+    dqs: list[float] = []
+    images: list[str] = []
+    for line in DATASETS.read_text().split("\n"):
+        image, dq = line.split(",")
+        dqs.append(float(dq))
+        images.append(image)
+    dataset = FractalDataset(edited_images=[EDITED / _ for _ in images], original_images=[ORIGIN / _ for _ in images], original_dims=dqs)
+    train_data, test_data, _ = random_split(
+        dataset=dataset,
+        lengths=[TRAIN_DATA_SIZE, TEST_DATA_SIZE, len(dataset) - TRAIN_DATA_SIZE - TEST_DATA_SIZE],
+    )
+    train_loader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, shuffle=True, num_workers=MAX_WORKERS, pin_memory=True)
+    model = DqModel().to(DEVICE)
+    out_path = Path("data") / (model.__class__.__name__ + ".pth")
+    learn_dq.learn(
+        model=model,
+        dataloader=train_loader,
+        epochs=EPOCHS,
+        out=out_path,
+        device=DEVICE,
+        logger=logger,
+    )
+
+    model.load_state_dict(torch.load(out_path))
+
+    test_loader = DataLoader(dataset=test_data, batch_size=BATCH_SIZE, num_workers=MAX_WORKERS)
+
+    count = 0
+    for file in OUT.iterdir():
+        file.unlink()
+    dqs = []
+    loss = Loss()
+    for x, _, dq, _ in test_loader:
+        with torch.no_grad():
+            output = model(x.to(DEVICE))
+        for i, o in enumerate(output):
+            count += 1
+            dqs.append((dq[i].item(), o.item(), loss(dq[i].to(DEVICE), o).item()))
+    Path("data/out.csv").write_text("\n".join([f"{dq[0]},{dq[1]},{dq[2]}" for dq in dqs]))
 
 
 def main() -> None:
     """Main function."""
     logger.info("Starting...")
     logger.info(f"Device: {DEVICE}")
+    return test()
     dqs: list[float] = []
     images: list[str] = []
     for line in DATASETS.read_text().split("\n"):
@@ -66,27 +113,32 @@ def main() -> None:
     count = 0
     for file in OUT.iterdir():
         file.unlink()
-    for _, x, _ in test_loader:
+    dqs = []
+    for y, x, dq in test_loader:
         with torch.no_grad():
-            output, _ = model(x.to(DEVICE))
-        for o in output:
+            output, pred_dq = model(x.to(DEVICE))
+        for i, o in enumerate(output):
             Image.fromarray((o.cpu().squeeze_(0).squeeze_(0).numpy() * 255).astype(np.uint8)).save(OUT / f"{count}.png")
+            Image.fromarray((x[i].squeeze_(0).squeeze_(0).numpy() * 255).astype(np.uint8)).save(OUT / f"{count}_y.png")
             count += 1
+            dqs.append((dq[i].item(), pred_dq[i].item()))
+    Path("data/out.csv").write_text("\n".join([f"{dq[0]},{dq[1]}" for dq in dqs]))
 
 
 def learn(model: nn.Module, dataloader: DataLoader) -> None:
     """Learn."""
     bcl = Loss()
+    dq = FractalDim2d(7, nn.MaxPool2d(kernel_size=2, stride=2))
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     size = len(dataloader.dataset)
     total_size = size * EPOCHS
     start = datetime.datetime.now(tz=datetime.timezone.utc)
     for epoch in range(EPOCHS):
         model.train()
-        for batch, (_, edited, dim) in enumerate(dataloader):
+        for batch, (y, edited, dim) in enumerate(dataloader):
             optimizer.zero_grad()
-            _, r_dim = model(edited.to(DEVICE))
-            loss = bcl(dim.to(DEVICE), r_dim)
+            pred = model(edited.to(DEVICE))
+            loss = bcl(dq(y, False), dq(pred, False)).sum()
             loss.backward()
             optimizer.step()
             if (batch + 1) % (size // 100) == 0:
@@ -156,4 +208,4 @@ def load_files() -> list[str]:
 
 
 if __name__ == "__main__":
-    test()
+    main()

@@ -1,7 +1,0 @@
-version: '3'
-services:
-  dev:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    shm_size: 8gb

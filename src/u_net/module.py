@@ -7,7 +7,7 @@ from collections import OrderedDict
 import torch
 from torch import Tensor, nn
 
-from u_net import FractalDim2d
+from u_net import FractalDim2d, transforms
 
 
 class UNet(nn.Module):
@@ -86,6 +86,10 @@ class UNet(nn.Module):
 
         self.dim = FractalDim2d(7, nn.MaxPool2d(kernel_size=2, stride=2))
 
+        self.bin = transforms.Binarization(0)
+
+        self.over = transforms.Overwrite()
+
     def forward(self: UNet, x: torch.Tensor) -> Tensor:
         """Forward pass."""
         enc1 = self.encoder1(x)
@@ -107,8 +111,9 @@ class UNet(nn.Module):
         dec1 = self.upconv1(dec2)
         dec1 = torch.cat((dec1, enc1), dim=1)
         dec1 = self.decoder1(dec1)
-        result = torch.sigmoid(self.conv(dec1))
-        return result, self.dim(result)
+        sig = torch.sigmoid(self.conv(dec1))
+        mono = self.bin(sig)
+        return self.over(mono, x)
 
     @staticmethod
     def _block(in_channels: int, features: int, name: str) -> nn.Sequential:

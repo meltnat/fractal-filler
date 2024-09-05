@@ -12,4 +12,4 @@ class Loss(nn.Module):
 
     def forward(self, pred: Tensor, target: Tensor) -> Tensor:
         """Forward function used to calculate the loss of the model."""
-        return ((target - pred) ** 2).mean()
+        return (target - pred) ** 2
