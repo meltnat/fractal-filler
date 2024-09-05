@@ -9,7 +9,7 @@ from torch import Tensor, nn
 class FractalDim2d(nn.Module):
     """This class is used to calculate the fractal dimension of a 2D image."""
 
-    def __init__(self, n_counts: int, min_n: float = 0, max_n: float = 9, bounds: Tensor | None = None) -> None:
+    def __init__(self, n_counts: int, bounds: Tensor) -> None:
         """Initialize the FractalDim2d class."""
         super().__init__()
         self.n = torch.tensor(n_counts)
@@ -17,7 +17,9 @@ class FractalDim2d(nn.Module):
         self.q = (2 ** self.range.clone()).log()
         self.ql = self.q.numel()
         self.qs = self.q.sum()
-        self.bounds = torch.arange(min_n, max_n, (max_n - min_n) / 100.0) if bounds is None else bounds
+        self.qs2 = self.qs**2
+        self.q2s = (self.q**2).sum()
+        self.bounds = bounds
         self.pool = nn.AvgPool2d(kernel_size=2, stride=2, divisor_override=1)
 
     def to(self, device: str) -> FractalDim2d:
@@ -31,23 +33,40 @@ class FractalDim2d(nn.Module):
 
     def dn(self, n: Tensor, x: list[Tensor]) -> Tensor:
         """Calculate the fractal dimension of the input image."""
-        maps = [i.clone().flatten() for i in x]
-        maps = [i[i != 0] for i in maps]
+        maps = []
+        for i in x:
+            tensor = i.clone().flatten()
+            maps.append(tensor[tensor != 0])
         ni = n.item()
+        a = 1.0
         b = maps[0].sum()
+        if ni != 0.0:
+            maps = [i / b for i in maps]
         if ni == 1.0:
-            a = 1.0
-            p = torch.stack([(i * i.log()).sum() for i in [j / b for j in maps]])
+            maps = [i * i.log() for i in maps]
+            p = torch.stack([i.sum() for i in maps])
         else:
-            a = 1.0 / (ni - 1)
-            p = torch.stack([(i**n).sum() for i in maps])
+            a /= ni - 1
+            maps = [i**n for i in maps]
+            p = torch.stack([i.sum() for i in maps]).log()
         a00 = min(p.numel(), self.ql)
-        a01 = p.sum()
-        return a * (a00 * (p * self.q).sum() - a01 * self.qs) / (a00 * (p**2).sum() - a01**2)
+        return a * (a00 * (p * self.q).sum() - p.sum() * self.qs) / (a00 * self.q2s - self.qs2)
 
     def forward(self, image: Tensor) -> Tensor:
         """Calculate the fractal dimension of the input image."""
         maps = [image.clone()]
         for _ in torch.arange(1, self.n):
             maps.append(self.pool(maps[-1]))
-        return torch.stack([self.dn(i, maps) for i in self.bounds])
+        return torch.stack(
+            [
+                torch.stack(
+                    [
+                        torch.stack(
+                            [self.dn(k, [_[i, j] for _ in maps]) for k in self.bounds],
+                        )
+                        for j in range(image.shape[1])
+                    ],
+                )
+                for i in range(image.shape[0])
+            ],
+        )

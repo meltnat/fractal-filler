@@ -16,6 +16,7 @@ import torch
 from PIL import Image
 from torch import Tensor, nn, optim
 from torch.utils.data import DataLoader, random_split
+from torchvision import transforms
 
 import utils
 from u_net import DqModel, FractalDataset, FractalDim2d, ImageDataset, Loss, UNet, learn_dq
@@ -38,11 +39,19 @@ TEST_DATA_SIZE = 10**2
 
 def test() -> None:
     """Test."""
-    path = "data/test/1.png"
-    tensor = torch.tensor(Image.open(path).convert("L"))
+    path1 = "data/test/image.bmp"
+    path2 = "data/test/image.png"
+    image1 = Image.open(path1).convert("L")
+    image2 = Image.open(path2).convert("L")
+    tensor = torch.stack([transforms.ToTensor()(image1), transforms.ToTensor()(image2)])
     threshold = 0.5
     tensor[tensor > threshold] = 1
     tensor[tensor <= threshold] = 0
+    tensor = tensor - 1
+    tensor = tensor * -1
+    result = FractalDim2d(10, bounds=torch.tensor([-1.2, 0, 1, 2]))(tensor)
+    print(result)
+    return
     for i, j in enumerate(FractalDim2d(7, bounds=torch.tensor([0, 1, 2]))(tensor)):
         logger.info(f"Index: {i} Value: {j}")
     return
